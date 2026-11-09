@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.validators import (
@@ -12,6 +13,7 @@ from app.api.validators import (
 from app.core.db import get_async_session
 from app.crud.charity_project import charity_project_crud
 from app.models.charity_project import CharityProject
+from app.models.donation import Donation
 from app.schemas.charity_project import (
     CharityProjectCreate,
     CharityProjectDB,
@@ -40,7 +42,18 @@ async def create_charity_project(
     """Создать целевой проект."""
     await check_name_duplicate(project_in.name, session)
     new_project = CharityProject(**project_in.model_dump())
-    return await invest_new_project(new_project, session)
+    session.add(new_project)
+
+    sources = await session.execute(
+        select(Donation)
+        .where(Donation.fully_invested.is_(False))
+        .order_by(Donation.create_date)
+    )
+    invest_new_project(new_project, sources.scalars().all())
+
+    await session.commit()
+    await session.refresh(new_project)
+    return new_project
 
 
 @router.patch(
